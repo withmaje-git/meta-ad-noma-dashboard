@@ -55,6 +55,10 @@ LATEST = df_raw["date"].max()
 WINDOW_START = LATEST - pd.Timedelta(days=13)
 df_all = df_raw[df_raw["date"] >= WINDOW_START].copy()
 
+# 특정 캠페인 제외(요청): 대시보드 전 구간에서 숨김
+EXCLUDE_CAMPAIGNS = {"새 판매 캠페인"}
+df_all = df_all[~df_all["campaign"].isin(EXCLUDE_CAMPAIGNS)].copy()
+
 date_min, date_max = df_all["date"].min(), df_all["date"].max()
 
 # ==================== 어제(최신일) 지출 0 항목 제외 ====================
@@ -79,7 +83,7 @@ df_ad = df_all[df_all["ad"].isin(ACT_AD)]             # 3단계
 st.sidebar.header("필터")
 MIN_LINE_SPEND = st.sidebar.number_input(
     "선그래프 최소 누적지출(원) — 이하 항목 숨김", min_value=0,
-    value=3000, step=1000,
+    value=1000, step=1000,
     help="2·3단계 선그래프에서 14일 누적 지출이 이 값 미만인 항목은 잡음이라 숨깁니다.",
 )
 DAILY_LABEL_MIN = st.sidebar.number_input(
@@ -247,7 +251,7 @@ st.caption("캠페인 아래 광고세트마다 개별 그래프. 파란 막대=
            "주황 선=ROAS(오른쪽 축), 점 위 숫자=그날 ROAS(소수점 1자리). 회색 점선=ROAS 1.0(본전).")
 
 campaigns = (
-    df_adset.groupby("campaign")["spend"].sum().sort_values(ascending=False).index.tolist()
+    df_adset.groupby("campaign")["spend"].sum().sort_index().index.tolist()
 )
 for camp in campaigns:
     cdf = df_adset[df_adset["campaign"] == camp]
@@ -255,7 +259,7 @@ for camp in campaigns:
     c_roas = c_val / c_spend if c_spend else 0
     st.subheader(f"📁 {camp}")
     st.caption(f"캠페인 합계 · 지출 ₩{c_spend:,.0f} · ROAS {c_roas:.2f}")
-    adsets_in = cdf.groupby("adset")["spend"].sum().sort_values(ascending=False).index
+    adsets_in = cdf.groupby("adset")["spend"].sum().sort_index().index
     for aset in adsets_in:
         g = cdf[cdf["adset"] == aset].groupby("date").agg(
             spend=("spend", "sum"), purchase_value=("purchase_value", "sum"),
@@ -275,7 +279,7 @@ st.caption("광고세트마다 그 안의 소재별 일별 지출 선. 점 위 �
            "범례(소재명)는 그래프 아래 가운데에 표시됩니다.")
 
 ad_adsets = (
-    df_ad.groupby("adset")["spend"].sum().sort_values(ascending=False).index.tolist()
+    df_ad.groupby("adset")["spend"].sum().sort_index().index.tolist()
 )
 for aset in ad_adsets:
     sub = df_ad[df_ad["adset"] == aset]
