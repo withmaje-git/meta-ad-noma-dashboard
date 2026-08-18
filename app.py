@@ -56,9 +56,14 @@ WINDOW_START = LATEST - pd.Timedelta(days=13)
 df_all = df_raw[df_raw["date"] >= WINDOW_START].copy()
 
 # 특정 캠페인 제외(요청): 대시보드 전 구간에서 숨김(총 성과 요약 KPI 포함).
-# 우리는 '구매전환' 캠페인만 확인하고, 참여 캠페인은 별도로 봄.
-EXCLUDE_CAMPAIGNS = {"새 판매 캠페인", "참여_인스타 기존 게시물_0814"}
-df_all = df_all[~df_all["campaign"].isin(EXCLUDE_CAMPAIGNS)].copy()
+# 우리는 '구매전환' 캠페인만 확인하고, 참여·게시물 부스팅은 별도로 봄.
+EXCLUDE_CAMPAIGNS = {"새 판매 캠페인"}
+# 참여/게시물 부스팅 캠페인은 이름이 매번 달라지므로 접두어로 제외.
+EXCLUDE_PREFIXES = ("참여", "Instagram 게시물")
+_excl = df_all["campaign"].isin(EXCLUDE_CAMPAIGNS) | df_all["campaign"].apply(
+    lambda c: any(str(c).startswith(p) for p in EXCLUDE_PREFIXES)
+)
+df_all = df_all[~_excl].copy()
 
 date_min, date_max = df_all["date"].min(), df_all["date"].max()
 
