@@ -55,8 +55,9 @@ LATEST = df_raw["date"].max()
 WINDOW_START = LATEST - pd.Timedelta(days=13)
 df_all = df_raw[df_raw["date"] >= WINDOW_START].copy()
 
-# 특정 캠페인 제외(요청): 대시보드 전 구간에서 숨김
-EXCLUDE_CAMPAIGNS = {"새 판매 캠페인"}
+# 특정 캠페인 제외(요청): 대시보드 전 구간에서 숨김(총 성과 요약 KPI 포함).
+# 우리는 '구매전환' 캠페인만 확인하고, 참여 캠페인은 별도로 봄.
+EXCLUDE_CAMPAIGNS = {"새 판매 캠페인", "참여_인스타 기존 게시물_0814"}
 df_all = df_all[~df_all["campaign"].isin(EXCLUDE_CAMPAIGNS)].copy()
 
 date_min, date_max = df_all["date"].min(), df_all["date"].max()
@@ -187,9 +188,22 @@ def daily_spend_roas(d: pd.DataFrame, group_col: str) -> pd.DataFrame:
     return g
 
 
+def add_rolling_roas(g: pd.DataFrame, window: int = 7) -> pd.DataFrame:
+    """일별 집계(g: date/spend/purchase_value)에 최근 window일 누적 ROAS(roas7) 추가.
+    달력상 빠진 날짜가 있어도 정확하도록 일단위로 reindex 후 롤링합계."""
+    g = g.sort_values("date").copy()
+    full = pd.date_range(g["date"].min(), g["date"].max(), freq="D")
+    daily = g.set_index("date")[["spend", "purchase_value"]].reindex(full).fillna(0)
+    rs = daily["spend"].rolling(window, min_periods=1).sum()
+    rv = daily["purchase_value"].rolling(window, min_periods=1).sum()
+    roas7 = (rv / rs).where(rs > 0, 0)
+    roas7.index.name = "date"
+    return g.merge(roas7.rename("roas7").reset_index(), on="date", how="left")
+
+
 def dual_axis_chart(g: pd.DataFrame):
-    """지출 막대 + ROAS 선(점 위 숫자) 이중축 그래프. 제목/합계는 그래프 밖에서 표기."""
-    g = g.sort_values("date")
+    """지출 막대 + 당일 ROAS 선(점 위 숫자) + 최근 7일 ROAS 선 이중축 그래프."""
+    g = add_rolling_roas(g.sort_values("date"))
     labels = [f"{r:.1f}" if s > 0 else "" for s, r in zip(g["spend"], g["roas"])]
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     fig.add_trace(
@@ -199,11 +213,18 @@ def dual_axis_chart(g: pd.DataFrame):
         secondary_y=False,
     )
     fig.add_trace(
-        go.Scatter(x=g["date"], y=g["roas"], name="ROAS(주황)",
+        go.Scatter(x=g["date"], y=g["roas"], name="당일 ROAS(주황)",
                    mode="lines+markers+text", line=dict(color="#f59e0b", width=3),
                    marker=dict(size=7), text=labels, textposition="top center",
                    textfont=dict(size=11, color="#b45309"),
-                   hovertemplate="ROAS %{y:.2f}<extra></extra>"),
+                   hovertemplate="당일 ROAS %{y:.2f}<extra></extra>"),
+        secondary_y=True,
+    )
+    fig.add_trace(
+        go.Scatter(x=g["date"], y=g["roas7"], name="최근 7일 ROAS(보라)",
+                   mode="lines+markers", line=dict(color="#7c3aed", width=2.5, dash="dash"),
+                   marker=dict(size=5),
+                   hovertemplate="최근 7일 ROAS %{y:.2f}<extra></extra>"),
         secondary_y=True,
     )
     fig.add_hline(y=1.0, line_dash="dot", line_color="gray", secondary_y=True)
@@ -245,10 +266,34 @@ def multiline_spend_with_roas(g: pd.DataFrame, series_col: str):
     st.plotly_chart(fig, width="stretch")
 
 
-# ==================== 1단계: 캠페인 · 광고세트별 (각 세트마다 이중축) ====================
-st.header("① 캠페인 · 광고세트별 — 지출(막대) & ROAS(선)")
+# ==================== 1단계: 캠페인별 (캠페인마다 이중축) ====================
+st.header("① 캠페인별 — 지출(막대) & ROAS(선)")
+st.caption("구매전환 캠페인마다 개별 그래프. 파란 막대=일별 지출(왼쪽 축), "
+           "주황 선=그날 ROAS, 보라 점선=그날 기준 최근 7일 ROAS(오른쪽 축). "
+           "회색 점선=ROAS 1.0(본전).")
+
+camp_only = (
+    df_camp.groupby("campaign")["spend"].sum().sort_index().index.tolist()
+)
+for camp in camp_only:
+    cdf = df_camp[df_camp["campaign"] == camp]
+    g = cdf.groupby("date").agg(
+        spend=("spend", "sum"), purchase_value=("purchase_value", "sum"),
+    ).reset_index()
+    if g["spend"].sum() <= 0:
+        continue
+    g["roas"] = (g["purchase_value"] / g["spend"]).where(g["spend"] > 0, 0)
+    c_spend = g["spend"].sum(); c_val = g["purchase_value"].sum()
+    c_roas = c_val / c_spend if c_spend else 0
+    st.markdown(f"**📁 {camp}**  ·  지출 ₩{c_spend:,.0f} · ROAS {c_roas:.2f}")
+    dual_axis_chart(g)
+st.divider()
+
+# ==================== 2단계: 캠페인 · 광고세트별 (각 세트마다 이중축) ====================
+st.header("② 캠페인 · 광고세트별 — 지출(막대) & ROAS(선)")
 st.caption("캠페인 아래 광고세트마다 개별 그래프. 파란 막대=일별 지출(왼쪽 축), "
-           "주황 선=ROAS(오른쪽 축), 점 위 숫자=그날 ROAS(소수점 1자리). 회색 점선=ROAS 1.0(본전).")
+           "주황 선=그날 ROAS, 보라 점선=그날 기준 최근 7일 ROAS(오른쪽 축). "
+           "점 위 숫자=그날 ROAS(소수점 1자리). 회색 점선=ROAS 1.0(본전).")
 
 campaigns = (
     df_adset.groupby("campaign")["spend"].sum().sort_index().index.tolist()
@@ -273,8 +318,8 @@ for camp in campaigns:
         dual_axis_chart(g)
     st.divider()
 
-# ==================== 2단계: 소재별 (광고세트별로 분리한 다중 선) ====================
-st.header("② 소재별 — 광고세트별로 분리 (지출 선 + ROAS 라벨)")
+# ==================== 3단계: 소재별 (광고세트별로 분리한 다중 선) ====================
+st.header("③ 소재별 — 광고세트별로 분리 (지출 선 + ROAS 라벨)")
 st.caption("광고세트마다 그 안의 소재별 일별 지출 선. 점 위 숫자=그날 ROAS(소수점 1자리). "
            "범례(소재명)는 그래프 아래 가운데에 표시됩니다.")
 
