@@ -6,22 +6,14 @@
   ② 계정 전체 어제 vs 7일 일평균
   ③ 광고세트별 어제 vs 7일 일평균 (어제 지출>0 세트만, 어제 지출 desc)
   ④ 지금 바로 조치하면 좋을 것
-'새 판매 캠페인'과 참여·게시물 부스팅 캠페인('참여'/'Instagram 게시물' 접두어)은
-리포트에서 제외 → 구매전환 캠페인만 집계(대시보드 app.py와 동일 규칙).
+어제(최신일) 지출이 0인 캠페인은 리포트에서 제외 → 어제도 돌고 있는 캠페인만
+집계(대시보드 app.py와 동일 규칙). 수동 제외 리스트 없음.
 """
 import os
 import csv
 from collections import defaultdict
 
 CSV_PATH = os.environ.get("CSV_PATH", "data/insights_daily.csv")
-EXCLUDE_CAMPAIGNS = {"새 판매 캠페인"}
-# 참여/게시물 부스팅 캠페인은 이름이 매번 바뀌므로 접두어로 제외(app.py와 동일).
-EXCLUDE_PREFIXES = ("참여", "Instagram 게시물")
-
-
-def is_excluded(campaign):
-    c = campaign or ""
-    return c in EXCLUDE_CAMPAIGNS or c.startswith(EXCLUDE_PREFIXES)
 
 # 조치 제안 임계값 (펫햄프/클라리온과 동일)
 RED_SPEND = 100000   # 7일 지출 이 이상 + ROAS<1 → 중단/교체
@@ -42,13 +34,23 @@ def pct(a, avg):
 
 def main():
     with open(CSV_PATH, encoding="utf-8-sig") as f:
-        rows = [r for r in csv.DictReader(f) if not is_excluded(r["campaign"])]
-    if not rows:
+        all_rows = list(csv.DictReader(f))
+    if not all_rows:
         print("CSV가 비어 있습니다.")
         return
 
+    # 어제(최신일) 지출이 있는 캠페인만 집계(어제 지출 0 캠페인 제외).
+    latest = max(r["date"] for r in all_rows)
+    active_campaigns = {
+        r["campaign"] for r in all_rows
+        if r["date"] == latest and num(r["spend"]) > 0
+    }
+    rows = [r for r in all_rows if r["campaign"] in active_campaigns]
+    if not rows:
+        print("어제 지출이 있는 캠페인이 없습니다.")
+        return
+
     dates = sorted({r["date"] for r in rows})
-    latest = dates[-1]
     last7 = dates[-7:]
     ndays = len(last7)
     last7set = set(last7)

@@ -52,18 +52,16 @@ df_raw = load_data()
 
 LATEST = df_raw["date"].max()
 
-# 특정 캠페인 제외(요청): 대시보드 전 구간에서 숨김(개요·그래프 모두).
-# 우리는 '구매전환' 캠페인만 확인하고, 참여·게시물 부스팅은 별도로 봄.
-EXCLUDE_CAMPAIGNS = {"새 판매 캠페인"}
-# 참여/게시물 부스팅 캠페인은 이름이 매번 달라지므로 접두어로 제외.
-EXCLUDE_PREFIXES = ("참여", "Instagram 게시물")
+# 캠페인 제외 규칙: "어제(최신일) 지출이 0인 캠페인은 전 구간에서 무시".
+# 참여·게시물 부스팅·종료된 캠페인 등은 어제 지출이 0이라 자동으로 빠지고,
+# 어제도 돌고 있는(지출>0) 캠페인만 개요·그래프·조치에 반영한다. 수동 제외 리스트 없음.
+ACTIVE_CAMPAIGNS = set(
+    df_raw[(df_raw["date"] == df_raw["date"].max()) & (df_raw["spend"] > 0)]["campaign"]
+)
 
 
 def apply_exclude(df: pd.DataFrame) -> pd.DataFrame:
-    excl = df["campaign"].isin(EXCLUDE_CAMPAIGNS) | df["campaign"].apply(
-        lambda c: any(str(c).startswith(p) for p in EXCLUDE_PREFIXES)
-    )
-    return df[~excl].copy()
+    return df[df["campaign"].isin(ACTIVE_CAMPAIGNS)].copy()
 
 
 # 전 기간(최대 28일치) — 개요용
@@ -124,7 +122,7 @@ st.caption(
 
 # ==================== 개요 (7 / 14 / 28일) ====================
 st.subheader("📊 개요 — 기간별 현재 수치")
-st.caption("'구매전환' 캠페인 기준(참여·게시물 부스팅 제외). 최신일 기준 최근 7·14·28일 누적.")
+st.caption(f"어제({LATEST:%m-%d}) 지출이 있는 캠페인만 집계(어제 지출 0 캠페인 제외). 최신일 기준 최근 7·14·28일 누적.")
 
 
 def period_metrics(n: int) -> dict:
