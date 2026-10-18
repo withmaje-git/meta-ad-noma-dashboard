@@ -5,3 +5,5 @@ venv/
 .DS_Store
 .streamlit/secrets.toml
 raw_insights.json
+
+raw_ads.json
