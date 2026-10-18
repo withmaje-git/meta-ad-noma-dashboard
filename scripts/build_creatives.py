@@ -28,6 +28,7 @@ OUT_DIR = os.path.join(HERE, "data", "creatives")
 OUT_CSV = os.path.join(HERE, "data", "creatives.csv")
 UA = {"User-Agent": "Mozilla/5.0 (compatible; noma-dashboard/1.0)"}
 MAX_PX = 512   # 그리드 썸네일용 — 긴 변 이 값으로 축소(용량·로딩 절감)
+KEEP_EXISTING = "--refresh-all" not in sys.argv  # 기존 썸네일 재다운로드 생략(기본)
 
 try:
     from PIL import Image
@@ -98,10 +99,11 @@ def download(url, dest):
 
 
 def main():
-    if len(sys.argv) < 2:
-        raise SystemExit("usage: build_creatives.py <raw_ads.json> [insights_csv]")
-    raw = sys.argv[1]
-    csv_path = sys.argv[2] if len(sys.argv) > 2 else os.path.join(HERE, "data", "insights_daily.csv")
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    if not args:
+        raise SystemExit("usage: build_creatives.py <raw_ads.json> [insights_csv] [--refresh-all]")
+    raw = args[0]
+    csv_path = args[1] if len(args) > 1 else os.path.join(HERE, "data", "insights_daily.csv")
     wanted = csv_ad_names(csv_path)
     ads = load_ads(raw)
 
@@ -134,6 +136,18 @@ def main():
         is_video = 1 if (obj_type == "VIDEO" or (cr.get("object_story_spec") or {}).get("video_data")) else 0
         fname = f"{ad_id}.jpg"
         dest = os.path.join(OUT_DIR, fname)
+
+        # 이미 받은 소재는 재다운로드 생략(주간 재푸시로 repo 비대해지는 것 방지).
+        # 전체 새로고침은 `--refresh-all` 로 강제.
+        if KEEP_EXISTING and os.path.exists(dest):
+            ok += 1
+            rows.append({
+                "ad": name, "ad_id": ad_id, "object_type": obj_type,
+                "is_video": is_video, "status": a.get("effective_status") or a.get("status") or "",
+                "img": f"creatives/{fname}", "quality": "kept",
+            })
+            continue
+
         got = False
         # 풀이미지 시도 → 실패 시 thumbnail 폴백
         candidates = [(url, quality)]
