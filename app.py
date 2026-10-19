@@ -557,6 +557,17 @@ def render_creative_list(perf: pd.DataFrame, days: int):
     SORTMAP = {"지출": "spend", "ROAS": "roas", "CTR": "ctr",
                "후킹": "hook_rate", "지속시간": "avg_watch_sec", "최신순": "created_date"}
 
+    query = st.text_input(
+        "🔎 소재명 검색", key="list_search",
+        placeholder="예: 영상_E — 소재명에 포함된 소재만 표시 (대소문자 무시)",
+    ).strip()
+    if query:
+        m = m[m["ad"].str.contains(query, case=False, na=False, regex=False)]
+        if m.empty:
+            st.info(f"'{query}'를 소재명에 포함하는 소재가 없습니다.")
+            return
+        st.caption(f"'{query}' 포함 소재 {len(m)}개")
+
     st.caption(
         f"지출·CTR·ROAS는 선택 기간(최근 {days}일) 기준 · 게시일·후킹·지속시간은 소재 고유값(최근 90일). "
         "후킹 = 3초 동영상 재생 ÷ 노출 × 100, 지속시간 = 평균 동영상 재생 시간(초) — 영상만(이미지는 —). "
