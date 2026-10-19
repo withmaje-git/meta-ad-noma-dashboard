@@ -63,8 +63,22 @@ def load_creatives(path: str = "data/creatives.csv") -> pd.DataFrame:
     return c
 
 
+@st.cache_data
+def load_creative_meta(path: str = "data/creative_meta.csv") -> pd.DataFrame:
+    """소재 리스트 뷰용 메타데이터: 게시일·제품라인(밀크/버블)·포맷(영상/이미지)·
+    후킹률·지속시간. scripts/build_creative_meta.py 로 생성(최근 90일 기준, 소재 고유값)."""
+    cols = ["ad", "created_date", "product_line", "format",
+            "hook_rate", "avg_watch_sec", "impressions", "video_3s"]
+    try:
+        m = pd.read_csv(path)
+    except FileNotFoundError:
+        return pd.DataFrame(columns=cols)
+    return m
+
+
 df_raw = load_data()
 creatives = load_creatives()
+cmeta = load_creative_meta()
 
 LATEST = df_raw["date"].max()
 
@@ -512,6 +526,75 @@ def render_cards(sec: pd.DataFrame, cmap: pd.DataFrame, key: str, ncol: int = 4)
                 st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
 
 
+def render_creative_list(perf: pd.DataFrame, days: int):
+    """소재를 리스트(표)로 — 제품(밀크/버블) 또는 포맷(영상/이미지)으로 그룹.
+    컬럼: 소재명 · 게시일 · 지출 · CTR · 후킹 · 지속시간 · ROAS. 표 머리글 클릭으로 정렬."""
+    if cmeta.empty:
+        st.info("소재 메타데이터(data/creative_meta.csv)가 없습니다. "
+                "scripts/build_creative_meta.py 로 생성하세요.")
+        return
+
+    m = perf.merge(
+        cmeta[["ad", "created_date", "product_line", "format", "hook_rate", "avg_watch_sec"]],
+        on="ad", how="left",
+    )
+    m["product_line"] = m["product_line"].fillna("기타")
+    m["format"] = m["format"].fillna("이미지")
+
+    gsel = st.radio(
+        "그룹 기준", ["밀크 / 버블 (제품)", "영상 / 이미지 (포맷)"],
+        horizontal=True, key="list_group",
+    )
+    if gsel.startswith("밀크"):
+        gcol, order = "product_line", ["밀크", "버블", "기타"]
+    else:
+        gcol, order = "format", ["영상", "이미지"]
+
+    sort_label = st.radio(
+        "정렬 기준 (내림차순)", ["지출", "ROAS", "CTR", "후킹", "지속시간", "최신순"],
+        horizontal=True, key="list_sort",
+    )
+    SORTMAP = {"지출": "spend", "ROAS": "roas", "CTR": "ctr",
+               "후킹": "hook_rate", "지속시간": "avg_watch_sec", "최신순": "created_date"}
+
+    st.caption(
+        f"지출·CTR·ROAS는 선택 기간(최근 {days}일) 기준 · 게시일·후킹·지속시간은 소재 고유값(최근 90일). "
+        "후킹 = 3초 동영상 재생 ÷ 노출 × 100, 지속시간 = 평균 동영상 재생 시간(초) — 영상만(이미지는 —). "
+        "정렬은 위 '정렬 기준'을 바꿔서 하세요."
+    )
+
+    def fmt_num(x, suffix="", nan="—"):
+        return nan if pd.isna(x) else f"{x:.1f}{suffix}"
+
+    for gv in order:
+        sub = m[m[gcol] == gv].copy()
+        if sub.empty:
+            continue
+        gs = sub["spend"].sum(); gval = sub["purchase_value"].sum()
+        gr = gval / gs if gs else 0
+        st.markdown(f"**{gv}** · 소재 {len(sub)}개 · 지출 ₩{gs:,.0f} · "
+                    f"매출 ₩{gval:,.0f} · ROAS {gr:.2f}")
+        sub = sub.sort_values(SORTMAP[sort_label], ascending=False, na_position="last")
+        disp = pd.DataFrame({
+            "소재명": sub["ad"].values,
+            "게시일": sub["created_date"].fillna("—").values,
+            "지출(원)": [f"₩{x:,.0f}" for x in sub["spend"]],
+            "CTR(%)": [f"{x:.2f}" for x in sub["ctr"]],
+            "후킹(%)": [fmt_num(x) for x in sub["hook_rate"]],
+            "지속시간(초)": [fmt_num(x) for x in sub["avg_watch_sec"]],
+            "ROAS": [f"{x:.2f}" for x in sub["roas"]],
+        })
+        st.dataframe(
+            disp, hide_index=True, use_container_width=True,
+            column_config={
+                "소재명": st.column_config.Column(width="large"),
+                "게시일": st.column_config.Column(width="small"),
+                "후킹(%)": st.column_config.Column(help="3초 동영상 재생 ÷ 노출 (영상만)"),
+                "지속시간(초)": st.column_config.Column(help="평균 동영상 재생 시간 (영상만)"),
+            },
+        )
+
+
 def render_creative():
     st.caption(
         "소재(광고)를 썸네일로 보고 성과를 바로 확인합니다. 선택 기간 동안 지출이 있었던 소재를 "
@@ -560,6 +643,12 @@ def render_creative():
     st.subheader(f"🔴 저성과 · ROAS < 0.5 이고 CTR < 2.5%  ({len(low)}개)")
     st.caption("구매·클릭 모두 약한 소재. OFF·교체 검토 대상.")
     render_cards(low, cmap, key="sort_low")
+
+    st.divider()
+    st.subheader("📋 소재 리스트 — 제품 · 포맷별")
+    st.caption("썸네일 없이 표로 봅니다. 밀크/버블(제품) 또는 영상/이미지(포맷)로 그룹을 바꿔가며 "
+               "게시일·지출·CTR·후킹·지속시간·ROAS를 비교하세요.")
+    render_creative_list(perf, days)
 
 
 # ==================== 레이아웃 ====================
